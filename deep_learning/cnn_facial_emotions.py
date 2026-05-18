@@ -63,20 +63,47 @@ class ConvolutionalNeuralNetwork:
     @staticmethod
     def model_cnn(learning_rate=0.001):
 
+        # data_augmentation = models.Sequential([  # Adjusting problem of overfitting, won't run in test/validation
+        #     layers.RandomFlip("horizontal"),  # Faces can look to the left or right.
+        #     layers.RandomRotation(0.1),  # Slight head tilts (up to 10%)
+        #     layers.RandomZoom(0.1),  # Move your face slightly closer to or further away from your face.
+        # ])
+
         model = models.Sequential([
+            # data_augmentation,  # It doesn't work on my PC; it needs more loading capacity.
+
             layers.Rescaling(1. / 255, input_shape=(48, 48, 1)),  # Normalize data [0, 255] to [0, 1]
 
             layers.Conv2D(32, (3, 3), activation='relu', padding='same'),  # Spatial Invariance
+            layers.BatchNormalization(),
+            layers.Conv2D(32, (3, 3), activation='relu', padding='same'),
+            layers.BatchNormalization(),
             layers.MaxPooling2D((2, 2)),  # Size 48x48 to 24x24
+            layers.Dropout(0.25),  # DROPOUT 1: Disconnect 25% of connections after the first pooling
 
             layers.Conv2D(64, (3, 3), activation='relu', padding='same'),
+            layers.BatchNormalization(),
+            layers.Conv2D(64, (3, 3), activation='relu', padding='same'),
+            layers.BatchNormalization(),
             layers.MaxPooling2D((2, 2)),  # Reduce size again
+            layers.Dropout(0.30),  # Avoid overfitting
+
+            layers.Conv2D(128, (3, 3), activation='relu', padding='same'),  # Capturing complex expressions (12x12)
+            layers.BatchNormalization(),
+            layers.Conv2D(128, (3, 3), activation='relu', padding='same'),
+            layers.BatchNormalization(),
+            layers.MaxPooling2D((2, 2)),  # 6x6
+            layers.Dropout(0.40),
 
             layers.Flatten(),  # Adjust matrix in a linear vector
-            layers.Dense(128, activation='relu'),  # Deep layers
+            layers.Dense(256, activation='relu'),  # Deep layers
+            layers.BatchNormalization(),
+            layers.Dropout(0.5),  # DROPOUT 4: It shuts down 50% of dense neurons to prevent rote memorization
+
             layers.Dense(7, activation='softmax')  # Softmax because have 7 class of emotions
         ])
 
+        model.build(input_shape=(None, 48, 48, 1))
         model.summary()
 
         optimizer = Adam(learning_rate=learning_rate)
@@ -86,7 +113,7 @@ class ConvolutionalNeuralNetwork:
     def train_and_fit_model(self):
         logger.info('Fit and create a model')
 
-        model = self.model_cnn()
+        self.model_convolutional = self.model_cnn()
 
         es = EarlyStopping(
             monitor='val_loss',
@@ -94,7 +121,7 @@ class ConvolutionalNeuralNetwork:
             restore_best_weights=True,
             verbose=1
         )
-
+    
         # It halves the learning rate (factor=0.5) if the loss does not decrease for 2 epochs.
         reduce_lr = ReduceLROnPlateau(
             monitor='val_loss',
@@ -110,36 +137,42 @@ class ConvolutionalNeuralNetwork:
         weight_class = compute_class_weight('balanced', classes=unique_class, y=y_train_labels)
         dict_weight_class = dict(zip(unique_class, weight_class))
 
-        history = model.fit(
+        history = self.model_convolutional.fit(
             self.train_dataset,
             validation_data=self.test_dataset,
-            epochs=30,  # Early stop will work before complete 30
+            epochs=60,  # Early stop will work before complete 60
             class_weight=dict_weight_class,
             callbacks=[es, reduce_lr]
         )
-
-        print(history)
-
-
-
-
+        return history
 
     def evaluate_model(self):
-        logger.info('Evaluating the best model on test data')
-        y_predict = self.best_model.predict(self.X_test)
-        y_probs = self.best_model.predict_proba(self.X_test)[:, 1]
+        logger.info('Evaluating model')
+        y_true = np.concatenate([y for x, y in self.test_dataset], axis=0).argmax(axis=1)
 
-        cm = confusion_matrix(self.y_test, y_predict)
-        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
-        plt.title('Confusion Matrix')
-        plt.show()
+        y_predict_probs = self.model_convolutional.predict(self.test_dataset)
+        y_predict = y_predict_probs.argmax(axis=1)
 
         logger.info("\n--- Classification Report ---")
-        logger.info(f'{classification_report(self.y_test, y_predict)}')
+        logger.info(classification_report(y_true, y_predict, target_names=self.test_dataset.class_names))
 
-        # 4. AUC Score
-        auc = roc_auc_score(self.y_test, y_probs)
-        logger.info(f"AUC Score: {auc:.4f}")
+        cm = confusion_matrix(y_true, y_predict)
+        class_names = self.test_dataset.class_names
+        plt.figure(figsize=(10, 8))
+        sns.heatmap(
+            cm,
+            annot=True,
+            fmt='d',
+            cmap='Blues',
+            xticklabels=class_names,
+            yticklabels=class_names
+        )
+
+        plt.title('Confusion Matrix - Facial emotions', fontsize=14, pad=15)
+        plt.ylabel('Real Classes', fontsize=12)
+        plt.xlabel('Predict Classes', fontsize=12)
+        plt.tight_layout()
+        plt.show()
 
     def single_image_test(self):
         # Matplotlib para mostrar a foto e o resultado
@@ -149,3 +182,4 @@ class ConvolutionalNeuralNetwork:
 class_cnn = ConvolutionalNeuralNetwork()
 class_cnn.getting_data()
 class_cnn.train_and_fit_model()
+class_cnn.evaluate_model()
