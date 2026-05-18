@@ -5,9 +5,7 @@ import numpy as np
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 from sklearn.utils.class_weight import compute_class_weight
-
-
-from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score
+from sklearn.metrics import classification_report, confusion_matrix
 import seaborn as sns
 import matplotlib.pyplot as plt
 import logging
@@ -26,8 +24,9 @@ logger.addHandler(stream_handler)
 
 class ConvolutionalNeuralNetwork:
     def __init__(self):
-        self.train_dir = 'C:\\Users\\Weslei\\Desktop\\Assuntos_de_estudo\\Assuntos_de_estudo\\Fases da vida\\Fase I\\Repository Projects\\files\\deep_learning\\train_cnn'
-        self.test_dir = 'C:\\Users\\Weslei\\Desktop\\Assuntos_de_estudo\\Assuntos_de_estudo\\Fases da vida\\Fase I\\Repository Projects\\files\\deep_learning\\test_cnn'
+        self.train_dir = 'deep_learning\\train_cnn'
+        self.test_dir = 'deep_learning\\test_cnn'
+        self.single_image = 'deep_learning\\smile_fer.JPEG'
 
         # Image Settings of FER-2013 and batch size for my config
         self.batch_size = 64
@@ -66,8 +65,7 @@ class ConvolutionalNeuralNetwork:
         # data_augmentation = models.Sequential([  # Adjusting problem of overfitting, won't run in test/validation
         #     layers.RandomFlip("horizontal"),  # Faces can look to the left or right.
         #     layers.RandomRotation(0.1),  # Slight head tilts (up to 10%)
-        #     layers.RandomZoom(0.1),  # Move your face slightly closer to or further away from your face.
-        # ])
+        #     layers.RandomZoom(0.1),])  # Move your face slightly closer to or further away from your face
 
         model = models.Sequential([
             # data_augmentation,  # It doesn't work on my PC; it needs more loading capacity.
@@ -175,11 +173,48 @@ class ConvolutionalNeuralNetwork:
         plt.show()
 
     def single_image_test(self):
-        # Matplotlib para mostrar a foto e o resultado
-        pass
+        logger.info('Processing single image to predict')
+
+        img = tf.io.read_file(self.single_image)
+        img = tf.image.decode_image(img, channels=1, expand_animations=False)  # Convert to grey (channels=1)
+
+        img = tf.image.resize(img, self.img_size)  # Resize image to fit the template (48x48)
+        img_array = tf.expand_dims(img, 0)  # [48, 48, 1] to [1, 48, 48, 1])
+
+        predictions = self.model_convolutional.predict(img_array)
+        predicted_class_idx = np.argmax(predictions[0])  # Higher probability
+        confidence = predictions[0][predicted_class_idx] * 100
+
+        class_names = self.test_dataset.class_names if self.test_dataset else ['angry', 'disgust', 'fear', 'happy',
+                                                                               'neutral', 'sad', 'surprise']
+        predicted_emotion = class_names[predicted_class_idx]
+
+        logger.info("\n=== Results ===")
+        logger.info(f"Emotions detected: {predicted_emotion.upper()}")
+        logger.info(f"Confidence: {confidence:.2f}%")
+
+        for name, prob in zip(class_names, predictions[0]):
+            logger.info(f"-> {name}: {prob * 100:.2f}%")
+
+        plt.figure(figsize=(6, 6))
+
+        img_original_raw = tf.io.read_file(self.single_image)
+        img_original = tf.image.decode_image(img_original_raw, expand_animations=False)
+
+        if img_original.shape[-1] == 1:
+            plt.imshow(tf.squeeze(img_original), cmap='gray')
+        else:
+            plt.imshow(img_original)
+
+        plt.title(f"Emotion: {predicted_emotion.upper()} ({confidence:.1f}%)", fontsize=14, pad=10)
+        plt.axis('off')
+        plt.show()
+
+        return predicted_emotion, confidence
 
 
 class_cnn = ConvolutionalNeuralNetwork()
 class_cnn.getting_data()
 class_cnn.train_and_fit_model()
 class_cnn.evaluate_model()
+class_cnn.single_image_test()
