@@ -1,6 +1,7 @@
 # Goal:
-from sklearn.model_selection import TimeSeriesSplit
 import pandas as pd
+from statsmodels.tsa.stattools import adfuller
+import matplotlib.pyplot as plt
 import logging
 import sys
 
@@ -35,6 +36,18 @@ class TimeSeriesModel:
 
     def differentiation_test(self):
         logger.info('Differentiation Assumption')
+        p_value = adfuller(self.train)[1]
+
+        if p_value > 0.05:
+            self.train.loc[:, 'Close'] = self.train['Close'].diff()
+            self.train = self.train.dropna().copy()
+            
+            plt.figure(figsize=(10, 5))
+            plt.plot(self.train)
+            plt.title('Data')
+            plt.xlabel('Date')
+            plt.ylabel('Diff data')
+            plt.show()
 
     def linearity(self):
         pass
@@ -49,7 +62,7 @@ class TimeSeriesModel:
 ARIMA:
 import numpy as np
 import pandas as pd
-from statsmodels.tsa.stattools import adfuller
+
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 import statsmodels.api as sm
 import matplotlib.pyplot as plt
@@ -98,13 +111,6 @@ class SimpleARIMA:
             index=future_dates
         )
 
-        # imprimir valores formatados
-        print("\nPrevisão futura:")
-        for date, value in self.forecast_df[self.target].items():
-            print(f"{date.strftime('%Y-%m')} → {self.format_currency(value)}")
-
-        return self.forecast_df
-
     def plot(self):
         def format_value(x, _):
             if abs(x) >= 1e6:
@@ -135,3 +141,5 @@ class SimpleARIMA:
 
 
 class_time_series = TimeSeriesModel()
+class_time_series.divide_train_test()
+class_time_series.differentiation_test()
