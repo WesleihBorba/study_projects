@@ -1,6 +1,8 @@
 # Goal:
 import pandas as pd
 from statsmodels.tsa.stattools import adfuller
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+from statsmodels.tsa.statespace.sarimax import SARIMAX
 import matplotlib.pyplot as plt
 import logging
 import sys
@@ -41,7 +43,7 @@ class TimeSeriesModel:
         if p_value > 0.05:
             self.train.loc[:, 'Close'] = self.train['Close'].diff()
             self.train = self.train.dropna().copy()
-            
+
             plt.figure(figsize=(10, 5))
             plt.plot(self.train)
             plt.title('Data')
@@ -49,8 +51,23 @@ class TimeSeriesModel:
             plt.ylabel('Diff data')
             plt.show()
 
-    def linearity(self):
+    def find_parameters(self):
+        logger.info('Parameter of ARIMA and Seasonal SARIMA')
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
+
+        plot_acf(self.train, lags=10, ax=ax1)
+        plot_pacf(self.train, lags=10, ax=ax2)
+
+        plt.tight_layout()
+        plt.show()
+
+    def decomposition_data(self):
         pass
+
+    def sarima_model(self):
+        modelo = SARIMAX(self.train, order=(1, 1, 1), seasonal_order=(1, 1, 1, 12))
+        resultado = modelo.fit(disp=False)
+
 
     def resid_correlation(self):
         pass
@@ -58,44 +75,21 @@ class TimeSeriesModel:
     def normality_resid(self):
         pass
 
+    def linearity_resid(self):
+        pass
+
 """
 ARIMA:
 import numpy as np
 import pandas as pd
 
-from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 import statsmodels.api as sm
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 
 
-class SimpleARIMA:
-    def __init__(self, data, target_col, horizon):
-        self.data = data.copy()
-        self.target = target_col
-        self.horizon = horizon
 
-        self._prepare_data()
 
-    def _prepare_data(self):
-        self.data.index = pd.to_datetime(self.data.index) + pd.offsets.MonthEnd(0)
-        self.data = self.data.asfreq('ME')
-        self.series = self.data[self.target]
-
-    def check_stationarity(self):
-        p_value = adfuller(self.series)[1]
-        return p_value
-
-    def fit(self):
-        print("ADF p-value:", self.check_stationarity())
-
-        self.model = sm.tsa.ARIMA(
-            self.series,
-            order=(1, 1, 1),
-            trend='t',
-            enforce_stationarity=True,
-            enforce_invertibility=True
-        ).fit()
 
     def forecast(self):
         forecast = self.model.forecast(steps=self.horizon)
@@ -135,11 +129,34 @@ class SimpleARIMA:
         for data, valor in self.series.items():
             print(f'{data:%Y-%m-%d}: {self.format_currency(valor)}')
 
-    def format_currency(self, x):
-        return f'{x:,.2f}'.replace(',', 'X').replace('.', ',').replace('X', '.')
+import matplotlib.pyplot as plt
+import statsmodels.api as sm
+
+# Supondo que 'modelo_fit' é o seu modelo ARIMA treinado
+residuos = modelo_fit.resid
+
+# 1. Gráficos de diagnóstico automático do statsmodels
+fig, ax = plt.subplots(2, 2, figsize=(12, 8))
+sm.graphics.tsa.plot_acf(residuos, lags=20, ax=ax[0, 0])
+sm.graphics.tsa.plot_pacf(residuos, lags=20, ax=ax[0, 1])
+ax[1, 0].plot(residuos)
+ax[1, 0].set_title("Resíduos do Modelo")
+sm.qqplot(residuos, line='s', ax=ax[1, 1])
+ax[1, 1].set_title("QQ-plot dos Resíduos")
+
+plt.tight_layout()
+plt.show()
+
+from statsmodels.stats.diagnostic import acorr_ljungbox
+
+# Realiza o teste de Ljung-Box com as 10 primeiras defasagens
+resultado_ljungbox = acorr_ljungbox(residuos, lags=[10], return_df=True)
+print(resultado_ljungbox)
+
 """
 
 
 class_time_series = TimeSeriesModel()
 class_time_series.divide_train_test()
 class_time_series.differentiation_test()
+class_time_series.find_parameters()
