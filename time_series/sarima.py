@@ -1,8 +1,9 @@
-# Goal:
+# Goal: Predict climate time series with SARIMA
 import pandas as pd
 from statsmodels.tsa.stattools import adfuller
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 from statsmodels.tsa.statespace.sarimax import SARIMAX
+from statsmodels.tsa.seasonal import seasonal_decompose
 import matplotlib.pyplot as plt
 import logging
 import sys
@@ -21,52 +22,72 @@ logger.addHandler(stream_handler)
 class TimeSeriesModel:
 
     def __init__(self):
-        self.data = pd.read_csv('C:\\Users\\Weslei\\Desktop\\Assuntos_de_estudo\\Assuntos_de_estudo\\Fases da vida\\Fase I\\Repository Projects\\files\\BTC-USD_stock_data.csv')
-        self.data = self.data[['Date', 'Close']]
-        self.data['Date'] = pd.to_datetime(self.data['Date'])
-        self.data.set_index('Date', inplace=True)
+        self.train_data = pd.read_csv('C:\\Users\\Weslei\\Desktop\\Assuntos_de_estudo\\Assuntos_de_estudo\\Fases da vida\\Fase I\\Repository Projects\\files\\DailyDelhiClimateTrain.csv')
+        self.test_data = pd.read_csv('C:\\Users\\Weslei\\Desktop\\Assuntos_de_estudo\\Assuntos_de_estudo\\Fases da vida\\Fase I\\Repository Projects\\files\\DailyDelhiClimateTest.csv')
 
-        self.train, self.test = [None] * 2
+        self.train_data['date'] = pd.to_datetime(self.train_data['date'])
+        self.test_data['date'] = pd.to_datetime(self.test_data['date'])
 
-    def divide_train_test(self):
-        logger.info("Divide train and test")
-        proportion = 0.8
-        line = int(len(self.data) * proportion)
+        self.train_data.set_index('date', inplace=True)
+        self.test_data.set_index('date', inplace=True)
 
-        self.train = self.data.iloc[:line]
-        self.test = self.data.iloc[line:]
+        self.train_data = self.train_data.asfreq('D')
+        self.test_data = self.test_data.asfreq('D')
+
+        self.X_train = self.train_data[['humidity', 'meanpressure', 'wind_speed']]
+        self.y_train = self.train['meantemp']
+
+        self.y_test = self.test_data['meantemp']
+        self.X_test = self.test_data[['humidity', 'meanpressure', 'wind_speed']]
+
+        self.d_order = 0
+
+    def decomposition_data(self):
+        logger.info('Decomposition time series')
+
+        decomposition = seasonal_decompose(self.y_train["mean_temp"], model="additive", period=7)
+
+        fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
+        decomposition.trend.plot(ax=ax1, title="Trend")
+        decomposition.seasonal.plot(ax=ax2, title="Seasonal")
+        decomposition.resid.plot(ax=ax3, title="Resid")
+        plt.tight_layout()
+        plt.show()
 
     def differentiation_test(self):
         logger.info('Differentiation Assumption')
-        p_value = adfuller(self.train)[1]
+        p_value = adfuller(self.y_train)[1]
 
-        if p_value > 0.05:
+        while p_value > 0.05:
+            logger.debug(f'Data not stationary. P_value {p_value:.4f}')
             self.train.loc[:, 'Close'] = self.train['Close'].diff()
             self.train = self.train.dropna().copy()
+            self.d_order += 1
+            p_value = adfuller(self.train["Close"])[1]
 
-            plt.figure(figsize=(10, 5))
-            plt.plot(self.train)
-            plt.title('Data')
-            plt.xlabel('Date')
-            plt.ylabel('Diff data')
-            plt.show()
+        logger.debug(f'Data Series is stationary. P_value: {p_value:.4f}')
+        plt.figure(figsize=(10, 5))
+        plt.plot(self.train)
+        plt.title('Data')
+        plt.xlabel('Date')
+        plt.ylabel('Diff data')
+        plt.show()
 
     def find_parameters(self):
         logger.info('Parameter of ARIMA and Seasonal SARIMA')
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
 
-        plot_acf(self.train, lags=10, ax=ax1)
-        plot_pacf(self.train, lags=10, ax=ax2)
+        plot_acf(self.train['Close'], lags=30, ax=ax1)
+        plot_pacf(self.train['Close'], lags=30, ax=ax2)
 
         plt.tight_layout()
         plt.show()
 
-    def decomposition_data(self):
-        pass
-
     def sarima_model(self):
-        modelo = SARIMAX(self.train, order=(1, 1, 1), seasonal_order=(1, 1, 1, 12))
-        resultado = modelo.fit(disp=False)
+        logger.info('Fitting model')
+        model = SARIMAX(self.train, order=(0, self.d_order, 0), seasonal_order=(0, 0, 0, 7))
+        results = model.fit(disp=False)
+        logger.info(results.summary())
 
 
     def resid_correlation(self):
@@ -79,16 +100,6 @@ class TimeSeriesModel:
         pass
 
 """
-ARIMA:
-import numpy as np
-import pandas as pd
-
-import statsmodels.api as sm
-import matplotlib.pyplot as plt
-import matplotlib.ticker as ticker
-
-
-
 
 
     def forecast(self):
@@ -157,6 +168,7 @@ print(resultado_ljungbox)
 
 
 class_time_series = TimeSeriesModel()
-class_time_series.divide_train_test()
-class_time_series.differentiation_test()
-class_time_series.find_parameters()
+#class_time_series.divide_train_test()
+#class_time_series.decomposition_data()
+#class_time_series.differentiation_test()
+#class_time_series.find_parameters()
