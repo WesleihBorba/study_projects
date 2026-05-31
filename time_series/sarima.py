@@ -4,6 +4,8 @@ from statsmodels.tsa.stattools import adfuller
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 from statsmodels.tsa.seasonal import seasonal_decompose
+from statsmodels.graphics.gofplots import qqplot
+from sklearn.metrics import mean_squared_error, root_mean_squared_error
 import matplotlib.pyplot as plt
 import logging
 import sys
@@ -22,8 +24,8 @@ logger.addHandler(stream_handler)
 class TimeSeriesModel:
 
     def __init__(self):
-        self.train_data = pd.read_csv('C:\\Users\\Weslei\\Desktop\\Assuntos_de_estudo\\Assuntos_de_estudo\\Fases da vida\\Fase I\\Repository Projects\\files\\DailyDelhiClimateTrain.csv')
-        self.test_data = pd.read_csv('C:\\Users\\Weslei\\Desktop\\Assuntos_de_estudo\\Assuntos_de_estudo\\Fases da vida\\Fase I\\Repository Projects\\files\\DailyDelhiClimateTest.csv')
+        self.train_data = pd.read_csv('files\\DailyDelhiClimateTrain.csv')
+        self.test_data = pd.read_csv('files\\DailyDelhiClimateTest.csv')
 
         self.train_data['date'] = pd.to_datetime(self.train_data['date'])
         self.test_data['date'] = pd.to_datetime(self.test_data['date'])
@@ -31,21 +33,24 @@ class TimeSeriesModel:
         self.train_data.set_index('date', inplace=True)
         self.test_data.set_index('date', inplace=True)
 
-        self.train_data = self.train_data.asfreq('D')
-        self.test_data = self.test_data.asfreq('D')
+        self.train_data = self.train_data.resample('W').mean()
+        self.test_data = self.test_data.resample('W').mean()
 
-        self.X_train = self.train_data[['humidity', 'meanpressure', 'wind_speed']]
-        self.y_train = self.train['meantemp']
+        self.train_data = self.train_data.asfreq('W')
+        self.test_data = self.test_data.asfreq('W')
 
-        self.y_test = self.test_data['meantemp']
-        self.X_test = self.test_data[['humidity', 'meanpressure', 'wind_speed']]
+        self.X_train = self.train_data[['humidity']]
+        self.y_train = self.train_data[['meantemp']]
 
-        self.d_order = 0
+        self.y_test = self.test_data[['meantemp']]
+        self.X_test = self.test_data[['humidity']]
+
+        self.d_order, self.model, self.forecast = 0, None, None
 
     def decomposition_data(self):
         logger.info('Decomposition time series')
 
-        decomposition = seasonal_decompose(self.y_train["mean_temp"], model="additive", period=7)
+        decomposition = seasonal_decompose(self.y_train["meantemp"], model="additive", period=7)
 
         fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
         decomposition.trend.plot(ax=ax1, title="Trend")
@@ -60,14 +65,14 @@ class TimeSeriesModel:
 
         while p_value > 0.05:
             logger.debug(f'Data not stationary. P_value {p_value:.4f}')
-            self.train.loc[:, 'Close'] = self.train['Close'].diff()
-            self.train = self.train.dropna().copy()
+            self.y_train.loc[:, 'meantemp'] = self.y_train['meantemp'].diff()
+            self.y_train = self.y_train.dropna().copy()
             self.d_order += 1
-            p_value = adfuller(self.train["Close"])[1]
+            p_value = adfuller(self.y_train["meantemp"])[1]
 
         logger.debug(f'Data Series is stationary. P_value: {p_value:.4f}')
         plt.figure(figsize=(10, 5))
-        plt.plot(self.train)
+        plt.plot(self.y_train)
         plt.title('Data')
         plt.xlabel('Date')
         plt.ylabel('Diff data')
@@ -77,98 +82,115 @@ class TimeSeriesModel:
         logger.info('Parameter of ARIMA and Seasonal SARIMA')
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
 
-        plot_acf(self.train['Close'], lags=30, ax=ax1)
-        plot_pacf(self.train['Close'], lags=30, ax=ax2)
+        plot_acf(self.y_train['meantemp'], lags=30, ax=ax1)
+        plot_pacf(self.y_train['meantemp'], lags=30, ax=ax2)
 
         plt.tight_layout()
         plt.show()
 
     def sarima_model(self):
         logger.info('Fitting model')
-        model = SARIMAX(self.train, order=(0, self.d_order, 0), seasonal_order=(0, 0, 0, 7))
-        results = model.fit(disp=False)
-        logger.info(results.summary())
-
+        model = SARIMAX(self.y_train, exog=self.X_train, order=(1, self.d_order, 0), seasonal_order=(1, 0, 0, 52))
+        self.model = model.fit(disp=False)
+        logger.info(self.model.summary())
 
     def resid_correlation(self):
-        pass
+        logger.info("Visualizing Residual correlation")
+        resid = self.model.resid
+
+        fig, ax = plt.subplots(figsize=(10, 4))
+        plot_acf(resid, lags=30, ax=ax)
+        plt.title("ACF of resid (Everything must stay within the blue zone.)")
+        plt.show()
 
     def normality_resid(self):
-        pass
+        logger.info("Visualizing Residual Normality - Points should follow the red diagonal line")
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
+
+        self.model.resid.hist(ax=ax1, bins=20, edgecolor="black")
+        ax1.set_title("Hist of resid")
+
+        # Gráfico Q-Q ()
+        qqplot(self.model.resid, line="s", ax=ax2)
+        ax2.set_title("Gráfico Q-Q Normal")
+        plt.show()
 
     def linearity_resid(self):
-        pass
+        logger.info("Visualizing Residual Linearity - The dots should be scattered randomly without forming "
+                    "patterns or curves.")
 
-"""
+        plt.figure(figsize=(10, 4))
+        plt.scatter(self.model.fittedvalues, self.model.resid, alpha=0.5)
+        plt.axhline(y=0, color="r", linestyle="--")
+        plt.title("Linearity of adjust values X resid")
+        plt.xlabel("Adjust values")
+        plt.ylabel("Resid")
+        plt.show()
 
+    def plot_predictions(self):
+        logger.info("Generating and plotting forecasts")
 
-    def forecast(self):
-        forecast = self.model.forecast(steps=self.horizon)
-
-        future_dates = pd.date_range(
-            start=self.series.index[-1] + pd.DateOffset(months=1),
-            periods=self.horizon,
-            freq='ME'
+        forecast_object = self.model.get_forecast(
+            steps=len(self.X_test), exog=self.X_test
         )
+        self.forecast = forecast_object.predicted_mean
+        confidence_intervals = forecast_object.conf_int()
 
-        self.forecast_df = pd.DataFrame(
-            {self.target: forecast.values},
-            index=future_dates
+        plt.figure(figsize=(12, 6))
+        plt.plot(
+            self.y_train.index[-52:],
+            self.y_train.values[-52:],
+            label="Train (Last year)",
+            color="gray",
+            alpha=0.6,
         )
-
-    def plot(self):
-        def format_value(x, _):
-            if abs(x) >= 1e6:
-                return f'{x / 1e6:.1f}M'
-            elif abs(x) >= 1e3:
-                return f'{x / 1e3:.1f}K'
-            return f'{x:.0f}'
-
-        plt.figure(figsize=(10, 5))
-        plt.plot(self.series, label='Histórico')
-        plt.plot(self.forecast_df, label='Previsão', linestyle='--')
-        plt.title(f'ARIMA Forecast - {self.target}')
-        plt.xlabel('Data')
-        plt.ylabel(self.target)
-        plt.legend()
-
-        plt.gca().yaxis.set_major_formatter(ticker.FuncFormatter(format_value))
+        plt.plot(
+            self.y_test.index,
+            self.y_test.values,
+            label="Real Data (Test)",
+            color="black",
+            linewidth=2,
+        )
+        plt.plot(
+            self.y_test.index,
+            self.forecast,
+            label="Predict (With Exog)",
+            color="blue",
+            linestyle="--",
+            linewidth=2,
+        )
+        plt.fill_between(
+            self.y_test.index,
+            confidence_intervals.iloc[:, 0],  # Inferior limit
+            confidence_intervals.iloc[:, 1],  # Superior limit
+            color="blue",
+            alpha=0.15,
+            label="Confidence interval (95%)",
+        )
+        plt.title("Comparison: Actual Average Temperature vs. SARIMA Forecast")
+        plt.xlabel("Data")
+        plt.ylabel("Temperatura Média")
+        plt.legend(loc="upper left")
+        plt.grid(True, linestyle=":", alpha=0.6)
         plt.tight_layout()
         plt.show()
 
-        print('=== DADOS HISTÓRICOS ===')
-        for data, valor in self.series.items():
-            print(f'{data:%Y-%m-%d}: {self.format_currency(valor)}')
+    def evaluating_model(self):
+        logger.info("Looking if our model is good to use")
+        mse = mean_squared_error(self.y_test['meantemp'], self.forecast)
+        root_mean = root_mean_squared_error(self.y_test['meantemp'], self.forecast)
 
-import matplotlib.pyplot as plt
-import statsmodels.api as sm
-
-# Supondo que 'modelo_fit' é o seu modelo ARIMA treinado
-residuos = modelo_fit.resid
-
-# 1. Gráficos de diagnóstico automático do statsmodels
-fig, ax = plt.subplots(2, 2, figsize=(12, 8))
-sm.graphics.tsa.plot_acf(residuos, lags=20, ax=ax[0, 0])
-sm.graphics.tsa.plot_pacf(residuos, lags=20, ax=ax[0, 1])
-ax[1, 0].plot(residuos)
-ax[1, 0].set_title("Resíduos do Modelo")
-sm.qqplot(residuos, line='s', ax=ax[1, 1])
-ax[1, 1].set_title("QQ-plot dos Resíduos")
-
-plt.tight_layout()
-plt.show()
-
-from statsmodels.stats.diagnostic import acorr_ljungbox
-
-# Realiza o teste de Ljung-Box com as 10 primeiras defasagens
-resultado_ljungbox = acorr_ljungbox(residuos, lags=[10], return_df=True)
-print(resultado_ljungbox)
-
-"""
+        logger.info(f'Mean Squared Error: {mse}')
+        logger.info(f'Root Mean Squared Error: {root_mean}')
 
 
 class_time_series = TimeSeriesModel()
-#class_time_series.divide_train_test()
-#class_time_series.decomposition_data()
-#class_time_series.differentiation_test()
-#class_time_series.find_parameters()
+class_time_series.decomposition_data()
+class_time_series.differentiation_test()
+class_time_series.find_parameters()
+class_time_series.sarima_model()
+class_time_series.resid_correlation()
+class_time_series.normality_resid()
+class_time_series.linearity_resid()
+class_time_series.plot_predictions()
+class_time_series.evaluating_model()
