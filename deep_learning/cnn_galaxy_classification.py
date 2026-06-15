@@ -1,11 +1,9 @@
 # Goal: Classify Galaxy (Ellipticals, Spirals or Irregulars) using Pytorch looking the shape: galaxy-zoo-2-images-Kaggle
 
-import torchmetrics
-from torchvision import datasets, transforms
+from torchvision import transforms
 from torch.utils.data import DataLoader, random_split
 import torch.nn as nn
 import torch
-from torchvision.datasets import ImageFolder
 import torch.optim as optim
 from torchinfo import summary
 from PIL import Image
@@ -13,10 +11,6 @@ import os
 import pandas as pd
 import logging
 import sys
-
-import numpy as np
-from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
-from sklearn.utils.class_weight import compute_class_weight
 from sklearn.metrics import classification_report, confusion_matrix
 import seaborn as sns
 import matplotlib.pyplot as plt
@@ -65,7 +59,6 @@ class GalaxyDataset:
         return len(self.img_names)
 
     def __getitem__(self, index):
-        logger.info('Getting images')
         img_path = os.path.join(self.img_dir, f"{self.img_names[index]}.jpg")
 
         image = Image.open(img_path).convert("RGB")
@@ -82,6 +75,8 @@ class GalaxyPipeline:
         self.dataset = dataset
         self.train_dataset, self.test_dataset = [None] * 2
         self.cnn_model, self.optimizer, self.criterion = [None] * 3
+
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     def divide_train_test(self):
         logger.info('Dividing train and test with random split')
@@ -120,7 +115,24 @@ class GalaxyPipeline:
             nn.Dropout(p=0.5),
             nn.Linear(128, 3)  # Output: 3 LOGITS
         )
-        summary(self.cnn_model, input_size=(1, 3, 224, 224), device='cpu')
+
+        def kaiming_method(layer):
+            if isinstance(layer, (nn.Conv2d, nn.Linear)):
+                # Apply kaiming uniform
+                nn.init.kaiming_uniform_(layer.weight, nonlinearity='leaky_relu')
+
+                if layer.bias is not None:
+                    nn.init.constant_(layer.bias, 0.0)
+
+        self.cnn_model.apply(kaiming_method)
+
+        self.cnn_model.to(self.device)
+
+        try:
+            summary(self.cnn_model, input_size=(1, 3, 224, 224), device=self.device)
+        except ImportError:
+            summary(self.cnn_model, input_size=(3, 224, 224), device=str(self.device))
+
         self.optimizer = optim.Adam(self.cnn_model.parameters(), lr=learning_rate, weight_decay=1e-4)
         self.criterion = nn.CrossEntropyLoss()
 
@@ -137,6 +149,8 @@ class GalaxyPipeline:
             running_train_loss = 0.0
 
             for inputs, labels in self.train_dataset:
+                inputs, labels = inputs.to(self.device), labels.to(self.device)
+
                 self.optimizer.zero_grad(set_to_none=True)  # Clean Gradients of optimizer
                 outputs = self.cnn_model(inputs)  # Forward: predictions
 
@@ -156,6 +170,8 @@ class GalaxyPipeline:
 
             with torch.no_grad():  # Disable gradients, won't use backward and optimizer
                 for inputs, labels in self.test_dataset:
+                    inputs, labels = inputs.to(self.device), labels.to(self.device)
+
                     outputs = self.cnn_model(inputs)
 
                     # Loss of test for Early Stopping
@@ -195,7 +211,6 @@ class GalaxyPipeline:
 
         # Put the model into evaluation mode and move it to the correct device.
         self.cnn_model.eval()
-        self.cnn_model.to(device)
 
         all_predicts = []
         all_labels = []
@@ -204,14 +219,14 @@ class GalaxyPipeline:
 
         with torch.no_grad():
             for inputs, labels in self.test_dataset:
-                inputs = inputs.to(device)
+                inputs = inputs.to(self.device)
 
                 outputs = self.cnn_model(inputs)
 
                 _, predicted = torch.max(outputs, 1)
 
                 all_predicts.extend(predicted.cpu().numpy())
-                all_labels.extend(labels.numpy())
+                all_labels.extend(labels.cpu().numpy())
 
         logger.info("CLASSIFICATION REPORT - GALAXY MORPHOLOGY")
         logger.info(classification_report(all_labels, all_predicts, target_names=class_names))
@@ -235,12 +250,9 @@ class GalaxyPipeline:
         plt.show()
 
 
-
-
-
-
-class_cnn = ConvolutionalNeuralNetworkGalaxy()
-class_cnn.getting_data()
-class_cnn.train_and_fit_model()
+dataset_galaxy = GalaxyDataset()
+class_cnn = GalaxyPipeline(dataset_galaxy)
+class_cnn.divide_train_test()
+class_cnn.model_cnn_galaxy(learning_rate=0.001)
+class_cnn.running_model()
 class_cnn.evaluate_model()
-class_cnn.single_image_test()
