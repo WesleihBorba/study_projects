@@ -1,7 +1,7 @@
 # Goal: Classify Galaxy (Ellipticals, Spirals or Irregulars) using Pytorch looking the shape: galaxy-zoo-2-images-Kaggle
-
 from torchvision import transforms
 from torch.utils.data import DataLoader, random_split
+from tqdm import tqdm
 import torch.nn as nn
 import torch
 import torch.optim as optim
@@ -14,7 +14,6 @@ import sys
 from sklearn.metrics import classification_report, confusion_matrix
 import seaborn as sns
 import matplotlib.pyplot as plt
-
 
 # Logger setting
 logger = logging.getLogger(__name__)
@@ -29,9 +28,9 @@ logger.addHandler(stream_handler)
 
 class GalaxyDataset:
     def __init__(self):
-        self.img_dir = 'C:\\Users\\Weslei\\Desktop\\Assuntos_de_estudo\\Assuntos_de_estudo\\Fases da vida\\Fase I\\Repository Projects\\files\\deep_learning\\cnn_galaxy\\images'
-        self.mapping_galaxy_dir = pd.read_csv('C:\\Users\\Weslei\\Desktop\\Assuntos_de_estudo\\Assuntos_de_estudo\\Fases da vida\\Fase I\\Repository Projects\\files\\deep_learning\\cnn_galaxy\\gz2_filename_mapping.csv')
-        self.df_scientific_dir = pd.read_csv("C:\\Users\\Weslei\\Desktop\\Assuntos_de_estudo\\Assuntos_de_estudo\\Fases da vida\\Fase I\\Repository Projects\\files\\deep_learning\\cnn_galaxy\\gz2_hart16.csv")
+        self.img_dir = 'files\\deep_learning\\cnn_galaxy\\images'
+        self.mapping_galaxy_dir = pd.read_csv('files\\deep_learning\\cnn_galaxy\\gz2_filename_mapping.csv')
+        self.df_scientific_dir = pd.read_csv("files\\deep_learning\\cnn_galaxy\\gz2_hart16.csv")
 
         self.data_complete = pd.merge(self.mapping_galaxy_dir, self.df_scientific_dir, left_on="objid",
                                       right_on="dr7objid")
@@ -47,6 +46,14 @@ class GalaxyDataset:
 
         # Keep just 3 categories
         self.data_complete = self.data_complete[self.data_complete['target_class'] != -1].reset_index(drop=True)
+
+        # Filter in file
+        img_in_file = set(os.listdir(self.img_dir))
+        self.data_complete = self.data_complete[
+            self.data_complete['asset_id'].apply(lambda x: f"{x}.jpg" in img_in_file)
+        ].reset_index(drop=True)
+        logger.info(f"Found Images: {len(self.data_complete)}")
+
         self.img_names = self.data_complete['asset_id'].values
         self.labels = self.data_complete['target_class'].values
 
@@ -77,6 +84,7 @@ class GalaxyPipeline:
         self.cnn_model, self.optimizer, self.criterion = [None] * 3
 
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        logger.info(f'Device: {self.device}')
 
     def divide_train_test(self):
         logger.info('Dividing train and test with random split')
@@ -85,8 +93,14 @@ class GalaxyPipeline:
         test_size = len(self.dataset) - train_size
         train_dataset, test_dataset = random_split(self.dataset, [train_size, test_size])
 
-        self.train_dataset = DataLoader(train_dataset, batch_size=64, shuffle=True)
-        self.test_dataset = DataLoader(test_dataset, batch_size=64, shuffle=False)
+        self.train_dataset = DataLoader(
+            train_dataset, batch_size=64, shuffle=True,
+            num_workers=4, pin_memory=True
+        )
+        self.test_dataset = DataLoader(
+            test_dataset, batch_size=64, shuffle=False,
+            num_workers=4, pin_memory=True
+        )
 
     def model_cnn_galaxy(self, learning_rate=0.001):
         self.cnn_model = nn.Sequential(
@@ -148,7 +162,9 @@ class GalaxyPipeline:
             self.cnn_model.train()  # My model
             running_train_loss = 0.0
 
-            for inputs, labels in self.train_dataset:
+            prog_bar_train = tqdm(self.train_dataset, desc=f"Epoch {epoch + 1}/{num_epochs} [Train]")
+
+            for inputs, labels in prog_bar_train:
                 inputs, labels = inputs.to(self.device), labels.to(self.device)
 
                 self.optimizer.zero_grad(set_to_none=True)  # Clean Gradients of optimizer
@@ -159,6 +175,8 @@ class GalaxyPipeline:
                 self.optimizer.step()  # Update weights
                 running_train_loss += loss.item()  # Accumulate the loss for monitoring purposes.
 
+                prog_bar_train.set_postfix(loss=loss.item())
+
             epoch_loss = running_train_loss / len(self.train_dataset)
             logger.debug(f'Epoch [{epoch + 1}/{num_epochs}], Loss train: {epoch_loss:.4f}')
 
@@ -168,8 +186,10 @@ class GalaxyPipeline:
             correct = 0
             total = 0
 
+            prog_bar_test = tqdm(self.test_dataset, desc=f"Epoch {epoch + 1}/{num_epochs} [Test]")
+
             with torch.no_grad():  # Disable gradients, won't use backward and optimizer
-                for inputs, labels in self.test_dataset:
+                for inputs, labels in prog_bar_test:
                     inputs, labels = inputs.to(self.device), labels.to(self.device)
 
                     outputs = self.cnn_model(inputs)
@@ -184,7 +204,8 @@ class GalaxyPipeline:
 
             epoch_test_loss = running_test_loss / len(self.test_dataset)
             accuracy = 100 * correct / total
-            logger.debug(f'Epoch [{epoch + 1}/{num_epochs}] - Accuracy Test: {accuracy:.2f}%')
+            logger.debug(f'Epoch [{epoch + 1}/{num_epochs}] - Accuracy Test: {accuracy:.2f}% '
+                         f'Loss Test: {epoch_test_loss:.4f}')
 
             # Early stopp working
             if epoch_test_loss < (best_loss - min_delta):
@@ -206,15 +227,15 @@ class GalaxyPipeline:
             self.cnn_model.load_state_dict(best_model_weights)
             logger.info("Best weight restored.")
 
-    def evaluate_model(self, device='cpu'):
+    def evaluate_model(self):
         logger.info('Starting model evaluation and metrics plotting')
 
-        # Put the model into evaluation mode and move it to the correct device.
         self.cnn_model.eval()
 
         all_predicts = []
         all_labels = []
 
+        class_labels = [0, 1, 2]
         class_names = ['Ellipticals', 'Spirals', 'Irregular']
 
         with torch.no_grad():
@@ -229,9 +250,16 @@ class GalaxyPipeline:
                 all_labels.extend(labels.cpu().numpy())
 
         logger.info("CLASSIFICATION REPORT - GALAXY MORPHOLOGY")
-        logger.info(classification_report(all_labels, all_predicts, target_names=class_names))
 
-        cm = confusion_matrix(all_labels, all_predicts)
+        logger.info(classification_report(
+            all_labels,
+            all_predicts,
+            labels=class_labels,
+            target_names=class_names,
+            zero_division=0
+        ))
+
+        cm = confusion_matrix(all_labels, all_predicts, labels=class_labels)
 
         plt.figure(figsize=(10, 8))
         sns.heatmap(
@@ -250,9 +278,11 @@ class GalaxyPipeline:
         plt.show()
 
 
-dataset_galaxy = GalaxyDataset()
-class_cnn = GalaxyPipeline(dataset_galaxy)
-class_cnn.divide_train_test()
-class_cnn.model_cnn_galaxy(learning_rate=0.001)
-class_cnn.running_model()
-class_cnn.evaluate_model()
+# Important when we use multiprocessing with windows
+if __name__ == '__main__':
+    dataset_galaxy = GalaxyDataset()
+    class_cnn = GalaxyPipeline(dataset_galaxy)
+    class_cnn.divide_train_test()
+    class_cnn.model_cnn_galaxy(learning_rate=0.001)
+    class_cnn.running_model(num_epochs=3)
+    class_cnn.evaluate_model()
