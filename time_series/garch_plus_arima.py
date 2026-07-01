@@ -23,10 +23,12 @@ logger.addHandler(stream_handler)
 class GarchArimaModel:
 
     def __init__(self):
-        self.data = pd.read_csv('C:\\Users\\Weslei\\Desktop\\Assuntos_de_estudo\\Assuntos_de_estudo\\Fases da vida\\Fase I\\Repository Projects\\files\\AAPL_data.csv')
+        self.data = pd.read_csv('files\\AMD_data.csv')
 
         self.data['date'] = pd.to_datetime(self.data['date'])
         self.data.set_index('date', inplace=True)
+        self.data = self.data.asfreq('B')
+        self.data = self.data.ffill()
         self.data = self.data[['close']]
 
         self.garch, self.garch_resid = [None] * 2
@@ -39,12 +41,13 @@ class GarchArimaModel:
         logger.info('Adjusting return for finance')
         self.data['log_return'] = np.log(self.data['close'] / self.data['close'].shift(1)) * 100
         self.data = self.data.dropna()
+        self.data.drop(columns={'close'}, inplace=True)
 
     def train_test(self):
         logger.info('Dividing in train and test')
         split_point = int(len(self.data) * 0.8)
-        self.train = self.data['log_return'].iloc[:split_point]
-        self.test = self.data['log_return'].iloc[split_point:]
+        self.train = self.data.iloc[:split_point]
+        self.test = self.data.iloc[split_point:]
 
     def find_parameters(self):
         logger.info('Parameter of ARIMA')
@@ -58,7 +61,7 @@ class GarchArimaModel:
 
     def arima_model(self):
         logger.info('Running Arima')
-        self.arima = ARIMA(self.train, order=(1, 1, 1)).fit()
+        self.arima = ARIMA(self.train, order=(0, 0, 0)).fit()
         self.arima_resid = self.arima.resid
         logger.info(self.arima.summary())
 
@@ -91,8 +94,10 @@ class GarchArimaModel:
         plt.xlabel('Data')
         plt.ylabel('Return')
         plt.title('Hist of Arima Resid')
+        plt.show()
 
     def garch_model(self):
+        logger.info('Running Garch Model')
         self.garch = arch_model(self.arima_resid,
                                 mean='Zero',  # GARCH model that the mean has already been cleaned by the ARIMA model
                                 p=1,
@@ -109,32 +114,55 @@ class GarchArimaModel:
                     f'{ljung_box_test}')
 
     def validation_model(self):
-        logger.info("Looking if our model is good to use")
-        horizonte_test = len(self.test)
+        logger.info("Running Dynamic Rolling Forecast for Validation")
 
-        arima_forecast = self.arima.forecast(steps=horizonte_test)
-        garch_forecast = self.garch.forecast(horizonte=horizonte_test)
+        arima_predictions = []
+        garch_volatility_predictions = []
 
-        volatility_forecast = np.sqrt(garch_forecast.variance.iloc[-1].values)
+        history_returns = self.train['log_return'].to_list()
 
-        # CREATING DYNAMIC VOLATILITY BANDS
-        arima_forecast.index = self.test.index
-        volatility_forecast = pd.Series(volatility_forecast, index=self.test.index)
+        for i in range(len(self.test)):
+            current_mean = np.mean(history_returns)
+            arima_predictions.append(current_mean)
 
-        # Bands based on 2 standard deviations (95% confidence)
-        upper_superior = arima_forecast + (2 * volatility_forecast)
-        lower_inferior = arima_forecast - (2 * volatility_forecast)
+            current_residuals = np.array(history_returns) - current_mean
 
-        plt.figure(figsize=(12, 6))
-        plt.plot(self.test.index, self.test.values, label='Return of AAPL (Test)', color='gray', alpha=0.6)
-        plt.plot(arima_forecast.index, arima_forecast.values, label='Predict ARIMA (Mean)', color='blue', lw=2)
-        plt.fill_between(self.test.index, lower_inferior, upper_superior, color='red', alpha=0.15,
-                         label='Dynamic Volatility Bands (GARCH)')
-        plt.title('ARIMA-GARCH Forecasting on the Test Set (AAPL)')
+            temp_garch = arch_model(current_residuals, mean='Zero', p=1, q=1, dist='t')
+            temp_garch_res = temp_garch.fit(disp='off', show_warning=False)
+
+            garch_forecast = temp_garch_res.forecast(horizon=1)
+            next_step_variance = garch_forecast.variance.iloc[-1].values[0]
+            next_step_volatility = np.sqrt(next_step_variance)
+            garch_volatility_predictions.append(next_step_volatility)
+
+            actual_value = self.test['log_return'].iloc[i]
+            history_returns.append(actual_value)
+
+        arima_forecast_series = pd.Series(arima_predictions, index=self.test.index)
+        volatility_series = pd.Series(garch_volatility_predictions, index=self.test.index)
+
+        upper_superior = arima_forecast_series + (2 * volatility_series)
+        lower_inferior = arima_forecast_series - (2 * volatility_series)
+
+        inside_band = (self.test['log_return'] >= lower_inferior) & (self.test['log_return'] <= upper_superior)
+        coverage_rate = (inside_band.sum() / len(self.test)) * 100
+        logger.info(f"GARCH Band Coverage Rate: {coverage_rate:.2f}%")
+
+        plt.figure(figsize=(14, 7))
+        plt.plot(self.test.index, self.test['log_return'].values, label='Real Return of AMD (Teste)', color='gray',
+                 alpha=0.5)
+        plt.plot(arima_forecast_series.index, arima_forecast_series.values, label='Predict ARIMA (Mean)',
+                 color='blue', lw=1.5, linestyle='--')
+
+        plt.fill_between(self.test.index, lower_inferior, upper_superior, color='crimson', alpha=0.18,
+                         label=f'Volatility of GARCH (95% confidence)')
+
+        plt.title(f'Dynamic Validation ARIMA-GARCH (AMD) - Coverage: {coverage_rate:.2f}%')
         plt.xlabel('Data')
         plt.ylabel('Log-Return (%)')
-        plt.legend()
+        plt.legend(loc='upper left')
         plt.grid(True, linestyle='--', alpha=0.5)
+        plt.tight_layout()
         plt.show()
 
 
