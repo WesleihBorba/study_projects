@@ -1,1 +1,25 @@
 .idea/
+deep_learning/english_teacher/ai_teacher/flaming_horse_head.jpg
+deep_learning/english_teacher/ai_teacher/men_image.jfif
+deep_learning/english_teacher/ai_teacher/nvidia.jpg
+deep_learning/english_teacher/ai_teacher/prompts.txt
+deep_learning/english_teacher/audio/microphone_recorder.py
+deep_learning/english_teacher/speech/files_piper_audio
+
+# Logs
+*.log
+
+# Virtual environments
+venv/
+.venv/
+
+# Python cache
+__pycache__/
+**/__pycache__/
+*.py[cod]
+
+# Environment variables
+.env
+.env.*
+
+microphone_recorder.py
