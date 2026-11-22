@@ -57,9 +57,27 @@ class ConversationAI:
         )
 
         logger.info('Return of AI \n')
+
         payload_messages = [
-            {"role": "system", "content": self.prompt_text}, *historic_message,
-            {"role": "user", "content": self.new_message}
+            {
+                "role": "system",
+                "content": self.prompt_text
+            },
+            {
+                "role": "system",
+                "content": (
+                    "The following conversation messages are historical context only. "
+                    "They are provided to help you understand the user. "
+                    "Do not answer or continue historical questions unless the "
+                    "latest user message explicitly refers to them. "
+                    "Always prioritize the latest user message."
+                )
+            },
+            *historic_message,
+            {
+                "role": "user",
+                "content": self.new_message
+            }
         ]
 
         full_answer = self.api_client.chat.completions.create(

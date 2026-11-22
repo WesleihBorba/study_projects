@@ -48,7 +48,7 @@ class InsertDatabase:
 
                 query = """
                     WITH RecentMessages AS (
-                        SELECT TOP 100
+                        SELECT TOP 10
                             Id,
                             user_categoric,
                             text_information,
